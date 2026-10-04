@@ -1,5 +1,5 @@
 LLM_CONFIG = {
-    "api_key": "",
+    "api_key": "sk-89852e7d638e41d489abf96adb1cd570",
     "model_name": "deepseek-v4-flash",
     "base_url": "https://api.deepseek.com/v1",
     "temperature": 0.7,

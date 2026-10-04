@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from loguru import logger
 
-from pymilvus import MilvusClient
+from pymilvus import DataType, MilvusClient
 from sentence_transformers import SentenceTransformer
 
 
@@ -83,11 +83,41 @@ class MedicalKnowledgeBase:
         # 创建 collection（如果不存在）
         if not self.milvus_client.has_collection(collection_name):
             logger.info(f"Creating collection: {collection_name}")
+            schema = self.milvus_client.create_schema(
+                auto_id=False,
+                enable_dynamic_field=False
+            )
+            schema.add_field(
+                field_name="id",
+                datatype=DataType.VARCHAR,
+                is_primary=True,
+                max_length=65535
+            )
+            schema.add_field(
+                field_name="vector",
+                datatype=DataType.FLOAT_VECTOR,
+                dim=self.embedding_dim
+            )
+            schema.add_field(
+                field_name="content",
+                datatype=DataType.VARCHAR,
+                max_length=65535
+            )
+            schema.add_field(
+                field_name="metadata",
+                datatype=DataType.JSON
+            )
+
+            index_params = self.milvus_client.prepare_index_params()
+            index_params.add_index(
+                field_name="vector",
+                index_type="AUTOINDEX",
+                metric_type="COSINE"
+            )
             self.milvus_client.create_collection(
                 collection_name=collection_name,
-                dimension=self.embedding_dim,
-                metric_type="COSINE",  # 余弦相似度
-                auto_id=True  # 自动生成整数ID
+                schema=schema,
+                index_params=index_params
             )
         else:
             logger.info(f"Collection already exists: {collection_name}")
@@ -147,6 +177,7 @@ class MedicalKnowledgeBase:
                 metadata["total_chunks"] = len(chunks)
 
                 all_chunks.append({
+                    "id": f"{doc['id']}_{i}",
                     "content": chunk,
                     "metadata": metadata
                 })
@@ -161,9 +192,10 @@ class MedicalKnowledgeBase:
         data = []
         for i, chunk in enumerate(all_chunks):
             data.append({
+                "id": chunk["id"],
                 "vector": vectors[i].tolist(),
                 "content": chunk["content"],
-                "metadata": json.dumps(chunk["metadata"], ensure_ascii=False)
+                "metadata": chunk["metadata"]
             })
 
         # 插入
@@ -197,7 +229,7 @@ class MedicalKnowledgeBase:
         # 构建过滤条件
         filter_expr = None
         if filter_type:
-            filter_expr = f'metadata like "%\\"type\\": \\"{filter_type}\\"%"'
+            filter_expr = f'metadata["type"] == {json.dumps(filter_type, ensure_ascii=False)}'
 
         # 检索
         try:
@@ -214,19 +246,28 @@ class MedicalKnowledgeBase:
 
         # 格式化结果
         documents = []
+        # print("===========results start============")
+        # print(results)
+        # print("============results end============")
         for hits in results:
             for hit in hits:
+                print("===========hit start============")
+                print(hit)
+                print("============hit end============")
                 try:
                     documents.append({
                         "id": hit["id"],
                         "content": hit["entity"]["content"],
-                        "metadata": json.loads(hit["entity"]["metadata"]),
+                        "metadata": hit["entity"]["metadata"],
                         "score": 1 - hit["distance"]  # 转换为相似度分数
                     })
                 except Exception as e:
                     logger.warning(f"Failed to parse result: {e}")
                     continue
 
+        print("===========documents start============")
+        print(documents)
+        print("============documents end============")
         logger.debug(f"Found {len(documents)} documents")
         return documents
 
